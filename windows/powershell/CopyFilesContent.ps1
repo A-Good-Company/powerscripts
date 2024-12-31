@@ -1,17 +1,20 @@
 <#
 .SYNOPSIS
-    Formats and copies the content of specified file types in a given directory and its subdirectories.
+    Formats and copies the content of specified file types in a given directory and optionally its subdirectories, including word counts.
 
 .DESCRIPTION
-    This script recursively searches for files with specified extensions in a given directory (or the current directory if not specified) and its subdirectories,
-    formats their content with Markdown code blocks, and copies the result to the clipboard.
+    This script searches for files with specified extensions in a given directory (or the current directory if not specified) and optionally its subdirectories,
+    formats their content with Markdown code blocks, and copies the result to the clipboard. It also provides word counts for each file and a cumulative total.
     It can include specific file extensions and optionally print the output to the console.
 
 .PARAMETER Path
     The path to the directory to process. If not specified, the current directory is used.
 
 .PARAMETER IncludeExtensions
-    An array of file extensions to include in processing. Default is @(".txt", ".md", ".cs", ".js", ".html", ".css").
+    An array of file extensions to include in processing. If not specified, all file extensions will be included.
+
+.PARAMETER Recursive
+    A switch parameter. If present, subdirectories will be included in the search.
 
 .PARAMETER PrintToScreen
     A switch parameter. If present, the formatted output will be printed to the console.
@@ -21,37 +24,37 @@
     Runs the script on the current directory with default settings.
 
 .EXAMPLE
-    .\CopyFilesContent.ps1 -Path "C:\Projects\MyProject"
-    Runs the script on the specified directory with default settings.
+    .\CopyFilesContent.ps1 -Path "C:\Projects\MyProject" -Recursive
+    Runs the script on the specified directory and its subdirectories.
 
 .EXAMPLE
-    .\CopyFilesContent.ps1 -PrintToScreen -Path "C:\Projects\MyProject"
-    Runs the script on the specified directory and prints the output to the console.
-
-.EXAMPLE
-    .\CopyFilesContent.ps1 -IncludeExtensions @(".py", ".java", ".xml") -Path "C:\Projects\MyProject"
-    Runs the script on the specified directory, including only .py, .java, and .xml files.
-
-.EXAMPLE
-    .\CopyFilesContent.ps1 -PrintToScreen -IncludeExtensions @(".py", ".java", ".xml") -Path "C:\Projects\MyProject"
-    Runs the script on the specified directory, including specified files and printing the output to the console.
+    .\CopyFilesContent.ps1 -PrintToScreen -Path "C:\Projects\MyProject" -IncludeExtensions @(".py", ".java", ".xml")
+    Runs the script on the specified directory, including only .py, .java, and .xml files, and prints the output to the console.
 
 .NOTES
     If no path is specified, the script will run on the current directory.
-    If no extensions are specified, it will default to common text-based file types.
+    If no extensions are specified, it will include all file types.
 #>
 
 param(
     [string]$Path = (Get-Location),
-    [string[]]$IncludeExtensions = @(".txt", ".md", ".cs", ".js", ".html", ".css"),
+    [string[]]$IncludeExtensions = @(),
+    [switch]$Recursive = $false,
     [switch]$PrintToScreen = $false
 )
 
 $output = ""
+$processedFiles = @()
+$totalWordCount = 0
 
 # Function to check if a file should be included
 function ShouldIncludeFile($file) {
-    return $IncludeExtensions -contains $file.Extension.ToLower()
+    return $IncludeExtensions.Count -eq 0 -or $IncludeExtensions -contains $file.Extension.ToLower()
+}
+
+# Function to count words in a string
+function CountWords($text) {
+    return ($text -split '[\s.,]+' | Where-Object { $_ -ne '' }).Count
 }
 
 # Ensure the path exists
@@ -63,13 +66,29 @@ if (-not (Test-Path -Path $Path -PathType Container)) {
 # Get the full path
 $fullPath = Resolve-Path $Path
 
-Get-ChildItem -Path $fullPath -Recurse -File | Where-Object { ShouldIncludeFile $_ } | ForEach-Object {
+# Set up the Get-ChildItem parameters
+$getChildItemParams = @{
+    Path = $fullPath
+    File = $true
+}
+if ($Recursive) {
+    $getChildItemParams.Add("Recurse", $true)
+}
+
+Get-ChildItem @getChildItemParams | Where-Object { ShouldIncludeFile $_ } | ForEach-Object {
     $relativePath = $_.FullName.Substring($fullPath.Path.Length + 1)
     $content = Get-Content $_.FullName -Raw
+    $wordCount = CountWords $content
+    $totalWordCount += $wordCount
 
     $output += "``````$relativePath`n"
     $output += "$content`n"
     $output += "```````n`n"
+
+    $processedFiles += [PSCustomObject]@{
+        Path = $relativePath
+        WordCount = $wordCount
+    }
 }
 
 # Output to console if option is set
@@ -88,4 +107,18 @@ if ($PrintToScreen) {
 }
 
 Write-Output "`nProcessed directory: $fullPath"
-Write-Output "Included extensions: $($IncludeExtensions -join ', ')"
+if ($Recursive) {
+    Write-Output "Included subdirectories: Yes"
+} else {
+    Write-Output "Included subdirectories: No"
+}
+if ($IncludeExtensions.Count -eq 0) {
+    Write-Output "Included extensions: All"
+} else {
+    Write-Output "Included extensions: $($IncludeExtensions -join ', ')"
+}
+
+Write-Output "`nProcessed files:"
+$processedFiles | ForEach-Object { Write-Output "- $($_.Path) (Words: $($_.WordCount))" }
+Write-Output "`nTotal files processed: $($processedFiles.Count)"
+Write-Output "Total word count: $totalWordCount"
