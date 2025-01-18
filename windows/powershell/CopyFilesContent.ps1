@@ -1,43 +1,42 @@
 <#
 .SYNOPSIS
-    Formats and copies the content of specified file types in a given directory and optionally its subdirectories, including word counts.
+    Formats and copies the content of specified files and directories, including word counts.
 
 .DESCRIPTION
-    This script searches for files with specified extensions in a given directory (or the current directory if not specified) and optionally its subdirectories,
-    formats their content with Markdown code blocks, and copies the result to the clipboard. It also provides word counts for each file and a cumulative total.
-    It can include specific file extensions and optionally print the output to the console.
+    This script processes specified files and directories, formats their content with Markdown code blocks, and copies the result to the clipboard. 
+    It provides word counts for each file and a cumulative total. It can include specific file extensions and optionally print the output to the console.
 
-.PARAMETER Path
-    The path to the directory to process. If not specified, the current directory is used.
+.PARAMETER Targets
+    An array of file and directory paths to process. If not specified, the current directory is used.
 
 .PARAMETER IncludeExtensions
     An array of file extensions to include in processing. If not specified, all file extensions will be included.
 
 .PARAMETER Recursive
-    A switch parameter. If present, subdirectories will be included in the search.
+    A switch parameter. If present, subdirectories will be included in the search when processing directories.
 
 .PARAMETER PrintToScreen
     A switch parameter. If present, the formatted output will be printed to the console.
 
 .EXAMPLE
-    .\CopyFilesContent.ps1
-    Runs the script on the current directory with default settings.
+    .\CopyFilesContent.ps1 -Targets @("C:\file1.txt", "C:\Projects\MyProject")
+    Processes the specified file and directory.
 
 .EXAMPLE
-    .\CopyFilesContent.ps1 -Path "C:\Projects\MyProject" -Recursive
-    Runs the script on the specified directory and its subdirectories.
+    .\CopyFilesContent.ps1 -Targets @("C:\Projects\MyProject") -Recursive -IncludeExtensions @(".py", ".java")
+    Processes the specified directory and its subdirectories, including only .py and .java files.
 
 .EXAMPLE
-    .\CopyFilesContent.ps1 -PrintToScreen -Path "C:\Projects\MyProject" -IncludeExtensions @(".py", ".java", ".xml")
-    Runs the script on the specified directory, including only .py, .java, and .xml files, and prints the output to the console.
+    .\CopyFilesContent.ps1 -PrintToScreen -Targets @("C:\file1.txt", "C:\file2.py", "C:\Projects\MyProject")
+    Processes the specified files and directory, and prints the output to the console.
 
 .NOTES
-    If no path is specified, the script will run on the current directory.
+    If no targets are specified, the script will run on the current directory.
     If no extensions are specified, it will include all file types.
 #>
 
 param(
-    [string]$Path = (Get-Location),
+    [string[]]$Targets = @((Get-Location).Path),
     [string[]]$IncludeExtensions = @(),
     [switch]$Recursive = $false,
     [switch]$PrintToScreen = $false
@@ -57,37 +56,57 @@ function CountWords($text) {
     return ($text -split '[\s.,]+' | Where-Object { $_ -ne '' }).Count
 }
 
-# Ensure the path exists
-if (-not (Test-Path -Path $Path -PathType Container)) {
-    Write-Error "The specified path does not exist or is not a directory: $Path"
-    exit 1
-}
-
-# Get the full path
-$fullPath = Resolve-Path $Path
-
-# Set up the Get-ChildItem parameters
-$getChildItemParams = @{
-    Path = $fullPath
-    File = $true
-}
-if ($Recursive) {
-    $getChildItemParams.Add("Recurse", $true)
-}
-
-Get-ChildItem @getChildItemParams | Where-Object { ShouldIncludeFile $_ } | ForEach-Object {
-    $relativePath = $_.FullName.Substring($fullPath.Path.Length + 1)
-    $content = Get-Content $_.FullName -Raw
+# Function to process a file
+function ProcessFile($file) {
+    $content = Get-Content $file.FullName -Raw
     $wordCount = CountWords $content
-    $totalWordCount += $wordCount
+    
+    $fileOutput = "``````$($file.FullName)`n"
+    $fileOutput += "$content`n"
+    $fileOutput += "```````n`n"
 
-    $output += "``````$relativePath`n"
-    $output += "$content`n"
-    $output += "```````n`n"
-
-    $processedFiles += [PSCustomObject]@{
-        Path = $relativePath
+    $script:processedFiles += [PSCustomObject]@{
+        Path = $file.FullName
         WordCount = $wordCount
+    }
+
+    $script:totalWordCount += $wordCount
+
+    return $fileOutput
+}
+
+# Function to process a directory
+function ProcessDirectory($dir) {
+    $getChildItemParams = @{
+        Path = $dir
+        File = $true
+    }
+    if ($Recursive) {
+        $getChildItemParams.Add("Recurse", $true)
+    }
+
+    $dirOutput = ""
+
+    Get-ChildItem @getChildItemParams | Where-Object { ShouldIncludeFile $_ } | ForEach-Object {
+        $dirOutput += ProcessFile $_
+    }
+
+    return $dirOutput
+}
+
+# Process each target
+foreach ($target in $Targets) {
+    if (Test-Path -Path $target -PathType Leaf) {
+        # Target is a file
+        $file = Get-Item $target
+        if (ShouldIncludeFile $file) {
+            $output += ProcessFile $file
+        }
+    } elseif (Test-Path -Path $target -PathType Container) {
+        # Target is a directory
+        $output += ProcessDirectory $target
+    } else {
+        Write-Warning "The specified path does not exist: $target"
     }
 }
 
@@ -106,7 +125,9 @@ if ($PrintToScreen) {
     Write-Output "The output was not printed to the console. Use -PrintToScreen to enable console output."
 }
 
-Write-Output "`nProcessed directory: $fullPath"
+Write-Output "`nProcessed targets:"
+$Targets | ForEach-Object { Write-Output "- $_" }
+
 if ($Recursive) {
     Write-Output "Included subdirectories: Yes"
 } else {
